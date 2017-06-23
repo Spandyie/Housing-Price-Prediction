@@ -1,0 +1,117 @@
+save---
+title: "Housing Price Prediction Problem"
+author: "Spandan Mishra"
+date: "March 22, 2017"
+output: 
+  html_notebook: 
+    fig_caption: yes
+    highlight: tango
+    number_sections: yes
+    theme: journal
+---
+Real world housing prices are affected by variety of factors such as number of rooms, squarred area, proximity to the high way etc. In this model we will seeing how, elastic net regression can be used to predict the housing price based on various factors. We will also be analyzing relationship of different predictor variables with respect to each other.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+rm(list=ls()) # Clear the memory
+require(dplyr)
+require(tidyverse)
+require(VIM)
+require(mice)
+require(leaps)
+require(DAAG)
+library(glmnet)
+
+```
+## Training and test data
+Now lets load both training data and test data.
+
+```{r echo=FALSE,message=FALSE}
+
+train.data  <- read.csv('C:/Users/Spandan Mishra/Documents/R/housing_price/train.csv', stringsAsFactors=FALSE)
+test.data   <- read.csv('C:/Users/Spandan Mishra/Documents/R/housing_price/test.csv', stringsAsFactors=FALSE)
+totalData <- rbind(train.data[,c(-81)],test.data)
+
+```
+## Varriable names
+ The following code will read the variablenames from the data. 
+```{r}
+var.names <- names(totalData)
+cat_vars <- names(totalData)[which(sapply(totalData, is.character))]
+num_vars <- names(totalData)[which(sapply(totalData,is.integer))]
+```
+#Missing Data:
+In this section, we will visulaize the missing data in the data sets. Missing data imputation is done using mice package. Function md.pattern(), returns a tabular output of missing value present in each variable. We will remove $1^{st}$ and last column from the data frame.
+
+```{r echo=FALSE,message=FALSE}
+md.pattern(totalData[num_vars])
+
+```
+This does not seem to be neat representation of NA values, now lets try *VIM* package.
+```{r, echo=FALSE, fig.cap="Graphical representation of NA values present in numerical predictors"}
+mice_plot <- aggr(totalData[num_vars[c(-1)]], col=c("skyblue","red"),numbers=TRUE,sortVars=TRUE,labels=num_vars[c(-1)],cex.axis=0.8,gap=3,ylab=c("Missing data","Pattern"))
+```
+```{r,fig.cap="Graphical representation of NA values present in the data-sets"}
+mice_plot <- aggr(totalData[cat_vars[c(-1)]], col=c("skyblue","red"),numbers=TRUE,sortVars=TRUE,labels=cat_vars[c(-1)],cex.axis=0.8,gap=3,ylab=c("Missing data","Pattern"))
+```
+There are 76% values in data that contain no missing values. Variable *LotArea* has the highest number of missing values, with 17% of data missing. FOllowed by variable *MasVnrArea* with 5% of missing values. Similarly, for categorical variables *PoolQC, Alley, FireplaceQU,GarageFinish,GarageCond* are above 5% threshold. 
+```{r}
+drops <- c("LotFrontage","GarageYrBlt","PoolQC","MiscFeature","Alley","Fence","FireplaceQu","GarageType","GarageFinish","GarageQual","GarageCond")
+dropTotalData <- totalData[!(names(totalData) %in% drops)]
+```
+
+
+Missing data usually occurs in two forms
+*Missing Completely at Random (MCAR)
+* Missing Not at Random (MNAR)
+A general practise is to drop out the variables that have more than 5% of the data missing. Based on the above figures, lets list out the variables that have more than 5% data missing:
+*PoolQC
+*Alley
+*FireplaceQu
+*GarageFinish
+*LotFrontage
+*MasVnrare
+Now lets impute the missing data using *mice* package. Mice package is based on the principal of MAR (missing at randowm). For a numerical variable it uses linear combination of other numerical variables to generate an estimate for the variable to be imputed. Similarly, for the categorical variable it uses logistic regression.If $X_1$, $X_2$,$\ldots$,$X_k$ be the set of vairables, mice package uses linear regression/ logistic regression on predictive variable $X_2,X_3,\ldots,X_k$ to impute the missing values in variable $X_1$
+ 
+```{r} 
+dc <- names(dropTotalData)[which(sapply(dropTotalData,is.character))]
+di <- names(dropTotalData)[which(sapply(dropTotalData,is.integer))]
+dropTotalData[dc] <- lapply(dropTotalData[dc],as.factor)
+dropTotalData[di] <- lapply(dropTotalData[di],as.integer)
+```
+```{r Data Imputation, include=FALSE}
+
+ImputedData <- mice(dropTotalData, method="fastpmm",m=1,maxit=10,seed = 500)
+complete_data <- complete(ImputedData)
+```
+
+
+
+```{r Elastic-net regression}
+x= as.matrix(as.data.frame(lapply(complete_data[1:1460,],as.numeric)))
+y=as.matrix(as.data.frame(lapply(train.data$SalePrice,as.numeric)))
+##################################################
+ElasticFit1 <- cv.glmnet(x,y,type.measure="mse",nfold=10,alpha=1)
+ElasticFit0.5<- cv.glmnet(x,y,type.measure="mse",nfold=10,alpha=0.5)
+ElasticFit0 <- cv.glmnet(x,y,type.measure="mse",nfold=10,alpha=0)
+
+```
+
+The cross-validated mean-squarred error for different values of Lambda are shown in the figures.
+```{r Mean squarred errors, echo=FALSE}
+par(mfrow=c(2,2))
+plot(ElasticFit1);plot(ElasticFit0.5);plot(ElasticFit0);
+plot(log(ElasticFit1$lambda), ElasticFit1$cvm,pch=19,col="red",xlab="log(Lambda)",ylab=ElasticFit1$name)
+points(log(ElasticFit0.5$lambda), ElasticFit0.5$cvm,pch=19,col="grey",xlab="log(Lambda)",ylab=ElasticFit0.5$name)
+points(log(ElasticFit0$lambda), ElasticFit0$cvm,pch=19,col="blue",xlab="log(Lambda)",ylab=ElasticFit0$name)
+legend("topleft",legend=c("alpha= 1","alpha= .5","alpha 0"),pch=19,col=c("red","grey","blue"))
+
+```
+Now we will be using the elastic net model with $\alpha=0$ on the test data to make the predictions.
+```{r}
+
+x.text<- as.matrix(as.data.frame(lapply(complete_data[c(-1:-1460),],as.numeric)))
+y.predict<-predict(ElasticFit1,x.text,s="lambda.1se")
+
+```
+
